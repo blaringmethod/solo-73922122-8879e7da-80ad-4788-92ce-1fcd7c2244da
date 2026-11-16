@@ -26,6 +26,14 @@ MAX_CONCURRENT_BATCHES = _env_int("MAX_CONCURRENT_BATCHES", 2)
 RECALC_TIMEOUT_SECONDS = _env_int("RECALC_TIMEOUT_SECONDS", 10)
 # 轮询子进程的间隔
 POLL_INTERVAL_SECONDS = float(os.environ.get("POLL_INTERVAL_SECONDS", "0.2"))
+# 每路输出（stdout/stderr）保留的最大字节数：日志占用有界，超出只留头部
+MAX_LOG_BYTES_PER_STREAM = _env_int("MAX_LOG_BYTES_PER_STREAM", 64 * 1024)
+# 取消/超时时 SIGTERM 的宽限秒数，宽限后 SIGKILL
+TERMINATE_GRACE_SECONDS = float(
+    os.environ.get("TERMINATE_GRACE_SECONDS", "2")
+)
+# 收尾阶段（抽干任务、进程回收、传输关闭）每一步的有界等待秒数
+SHUTDOWN_WAIT_SECONDS = float(os.environ.get("SHUTDOWN_WAIT_SECONDS", "3"))
 
 # 样本表名称与关键列
 SAMPLE_SHEET_NAME = os.environ.get("SAMPLE_SHEET_NAME", "样本表")

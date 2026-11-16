@@ -32,6 +32,8 @@ FastAPI + openpyxl + LibreOffice（headless）完成自动核对，决定工作�
 | 取消 | 立即受理；排队任务立即落 `cancelled`；运行中任务通知协程后，**等计算进程及子进程退出、暂存清理完毕**才落 `cancelled` 并释放名额 |
 | 终态保护 | 已完成/失败/取消/中断的任务再次取消 → 告知“不可取消”，状态不变 |
 | 隔离 | 每批独立暂存目录、独立 LibreOffice profile、独立进程组、精简环境变量；工作簿/进程/结果互不影响 |
+| 输出处理 | 子进程 stdout/stderr 启动即由独立协程持续抽干，写入**有界**缓冲（每路默认上限 64 KiB，超出截断），输出再多也不会撑爆管道导致死锁；正常批次据此完成核对 |
+| 收尾 | 取消/超时走**有界**流程：SIGTERM 本批进程组 → 宽限 → SIGKILL，再回收进程、停止抽干并关闭管道传输。启动进程先退出而子孙仍持有管道写端时，按记录的进程组补杀并关闭读端，绝不无限等待输出管道 |
 | 状态查询 | 只读，任何时候都可用，不受另一批取消/超时影响 |
 | 重启恢复 | 启动时把未走完终态的持久化任务标记为 `interrupted`，清理无主暂存 |
 
@@ -66,7 +68,9 @@ docker compose up --build
 容器内以非 root 用户运行，LibreOffice 通过 apt 安装，任务数据持久化在
 Docker volume `verdict-data`（`/data`）。可用环境变量调整：
 `RECALC_TIMEOUT_SECONDS`、`MAX_CONCURRENT_BATCHES`、`MAX_UPLOAD_BYTES`、
-`MAX_SAMPLE_ROWS`、`DATA_DIR`、`SOFFICE_BIN`。
+`MAX_SAMPLE_ROWS`、`DATA_DIR`、`SOFFICE_BIN`、`MAX_LOG_BYTES_PER_STREAM`
+（每路输出缓冲上限，默认 65536）、`TERMINATE_GRACE_SECONDS`（终止宽限，
+默认 2）、`SHUTDOWN_WAIT_SECONDS`（收尾每步有界等待，默认 3）。
 
 ### 本地直接运行（需本机已有 soffice）
 
@@ -110,9 +114,14 @@ pytest -q
 SOFFICE_BIN=/path/to/soffice SOFFICE_LD_LIBRARY_PATH=/path/to/libs pytest -q
 ```
 
-测试覆盖（25 个用例）：缓存缺失/一致/失真、样例文件、宏与外链拒收、
+测试覆盖（40 个用例）：缓存缺失/一致/失真、样例文件、宏与外链拒收、
 超限与结构校验、公式错误整批失败、运行中取消、排队取消、终态不可取消、
-两批并发与名额释放、暂存清理、真实 LibreOffice 超时、重启中断标记。
+两批并发与名额释放、暂存清理、真实 LibreOffice 超时、重启中断标记；
+另有不依赖 LibreOffice 的重算/收尾协作回归：大量 stdout/stderr 正常完成、
+有界日志截断、启动进程先退出而子孙持有管道时取消/超时仍有界收尾、
+SIGTERM→SIGKILL 升级、取消后不发布判定、两批并行互不波及。
+无 LibreOffice 环境下，协作回归与纯逻辑用例（15 个）仍可直接运行，
+依赖 soffice 的 25 个用例自动跳过。
 
 ## 七、目录结构
 
@@ -122,7 +131,7 @@ app/            FastAPI 应用
   models.py       状态枚举与响应模型
   security.py     宏/外链/结构拒收校验（原件只读）
   workbook_io.py  openpyxl 读缓存、读重算结果、错误识别
-  recalc.py       LibreOffice 子进程、独立 profile/进程组、超时与取消
+  recalc.py       LibreOffice 子进程、独立 profile/进程组、有界日志抽干、有界超时与取消
   manager.py      名额控制、状态机、持久化与重启恢复
   main.py         HTTP 入口
 scripts/        失真样例生成器
